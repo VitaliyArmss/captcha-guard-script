@@ -6,6 +6,7 @@ obj/
 x64/
 x86/
 build/
+publish/
 
 # Visual Studio / Rider
 .vs/

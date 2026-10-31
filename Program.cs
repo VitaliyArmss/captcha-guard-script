@@ -15,10 +15,6 @@ try
             await RunBrowserMode(siteUrl);
             break;
 
-        case "local-auto":
-            await RunLocalAutoMode(apiUrl);
-            break;
-
         default:
             Console.Error.WriteLine("Неизвестный режим. Используйте --mode manual или --mode local-auto.");
             Environment.ExitCode = 2;
@@ -61,10 +57,10 @@ static async Task RunBrowserMode(string siteUrl)
         Headless = false,
         Channel = "chrome",
         Args = new[]
-    {
-        "--disable-blink-features=AutomationControlled", // Скрывает флаг автоматизации
-        "--start-maximized" // Делает окно более "человечным"
-    }
+        {
+            "--disable-blink-features=AutomationControlled", // Скрывает флаг автоматизации
+            "--start-maximized" // Делает окно более "человечным"
+        }
     });
 
     // Укажите путь к папке, где будет храниться профиль
@@ -92,7 +88,54 @@ static async Task RunBrowserMode(string siteUrl)
             isEnabled = true;
             break;
         }
-        await page.WaitForTimeoutAsync(350);
+
+        var widgetFrame = page.Locator("div.widget-frame[aria-label='Cloudflare Turnstile CAPTCHA']");
+
+        await widgetFrame.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+
+        var firstChild = widgetFrame.Locator("> *").First;
+
+        await firstChild.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+
+        var box = await firstChild.BoundingBoxAsync();
+
+        var random = new Random();
+
+        if (box != null)
+        {
+            float targetX = box.X + 10;
+            float targetY = box.Y + 20;
+
+            float jitterX = random.Next(-5, 5);
+            float jitterY = random.Next(-5, 5);
+
+            float finalX = targetX + jitterX;
+            float finalY = targetY + jitterY;
+
+            Console.WriteLine($"Движение мыши к координатам: X={finalX}, Y={finalY}");
+
+            await page.Mouse.MoveAsync(finalX, finalY, new() { Steps = 10 });
+
+            await Task.Delay(random.Next(100, 300));
+
+            await page.Mouse.DownAsync();
+            await Task.Delay(random.Next(50, 150));
+            await page.Mouse.UpAsync();
+
+            Console.WriteLine("Клик выполнен.");
+        }
+        else
+        {
+            Console.WriteLine("Элемент не виден на странице, клик невозможен.");
+        }
+
+        float x = random.Next(50, 800);
+        float y = random.Next(50, 600);
+
+        Console.WriteLine($"Движение мыши к координатам: X={x}, Y={y}");
+        await page.Mouse.MoveAsync(x, y, new() { Steps = 10 });
+
+        await page.WaitForTimeoutAsync(random.Next(4000, 8000));
     }
 
     if (!isEnabled)
@@ -117,38 +160,6 @@ static async Task RunBrowserMode(string siteUrl)
 
     await browser.CloseAsync();
 }
-
-static async Task RunLocalAutoMode(string apiUrl)
-{
-    if (!Uri.TryCreate(apiUrl, UriKind.Absolute, out var baseUri)
-        || (baseUri.Host != "localhost" && baseUri.Host != "127.0.0.1" && baseUri.Host != "::1"))
-    {
-        throw new InvalidOperationException("Режим local-auto разрешён только для localhost/127.0.0.1 и предназначен для локальной разработки.");
-    }
-
-    var apiKey = Environment.GetEnvironmentVariable("CAPTCHA_LAB_AUTOMATION_KEY");
-    if (string.IsNullOrWhiteSpace(apiKey))
-        throw new InvalidOperationException("Сначала задайте переменную окружения CAPTCHA_LAB_AUTOMATION_KEY. См. README.md.");
-
-    using var http = new HttpClient { BaseAddress = baseUri, Timeout = TimeSpan.FromSeconds(10) };
-    http.DefaultRequestHeaders.Add("X-Lab-Automation-Key", apiKey);
-    using var response = await http.PostAsync("/api/lab/secret", content: null);
-    var payload = await response.Content.ReadAsStringAsync();
-
-    if (!response.IsSuccessStatusCode)
-    {
-        throw new InvalidOperationException($"Локальный лабораторный endpoint вернул HTTP {(int)response.StatusCode}. Убедитесь, что backend в Development и Automation:Enabled=true.");
-    }
-
-    using var document = JsonDocument.Parse(payload);
-    if (!document.RootElement.TryGetProperty("secret", out var secretElement))
-        throw new InvalidOperationException("Backend не вернул поле secret.");
-
-    Console.WriteLine("Секретная строка получена в локальном режиме разработки:");
-    Console.WriteLine(secretElement.GetString());
-    Console.WriteLine("Примечание: этот режим не обходит Cloudflare. Он обращается к отдельному endpoint, доступному только в Development с localhost и отдельным ключом.");
-}
-
 static string? ReadArg(string[] arguments, string name)
 {
     for (var i = 0; i < arguments.Length - 1; i++)
